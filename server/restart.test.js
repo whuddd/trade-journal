@@ -14,10 +14,17 @@ let dir = ''
 /** @type {import('node:child_process').ChildProcess[]} */
 let children = []
 
+/**
+ * Only what the server needs. Passing process.env through would hand the test server the host's
+ * settings when this runs in the Vercel build: VERCEL turns auth on, and DATABASE_URL would point
+ * it at the production database.
+ */
+const SAFE_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' }
+
 /** @param {string} dbPath */
 async function startServer(dbPath) {
   const child = spawn(process.execPath, [entry], {
-    env: { ...process.env, PORT: '0', DB_PATH: dbPath },
+    env: { ...SAFE_ENV, PORT: '0', DB_PATH: dbPath },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   children.push(child)
