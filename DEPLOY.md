@@ -1,5 +1,5 @@
-App: https://APP-URL-PENDING
-API: https://APP-URL-PENDING
+App: https://trade-journal-two-sigma.vercel.app
+API: https://trade-journal-two-sigma.vercel.app
 Protected: /api/trades
 
 # Deploying the Trade Journal

@@ -3,7 +3,7 @@ import { prefersStill } from './motion.jsx'
 
 const LINES = [
   ['TJ/OS v1.0', 'trade journal terminal'],
-  ['mount', 'journal.db'],
+  ['mount', 'neon/postgres'],
   ['load', 'checklist rules'],
   ['index', 'open + closed trades'],
   ['sync', 'journaling streak'],

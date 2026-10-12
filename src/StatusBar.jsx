@@ -35,7 +35,7 @@ export default function StatusBar({ tab, tradeCount }) {
   return (
     <footer className="statusbar">
       <span className="status-mode">{tab.toUpperCase()}</span>
-      <span className="status-file">journal.db <span className="muted">· {tradeCount} trades</span></span>
+      <span className="status-file">neon/postgres <span className="muted">· {tradeCount} trades</span></span>
       <span className="status-keys">
         {HINTS[/** @type {keyof typeof HINTS} */ (tab)].map(([key, what]) => (
           <span key={key}><kbd>{key}</kbd> {what}</span>
