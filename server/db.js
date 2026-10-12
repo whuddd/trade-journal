@@ -9,6 +9,17 @@ function toRule(row) {
 }
 
 /** @param {any} row */
+function toUser(row) {
+  return {
+    id: Number(row.id),
+    github_id: Number(row.github_id),
+    login: String(row.login),
+    name: row.name === null ? null : String(row.name),
+    avatar_url: row.avatar_url === null ? null : String(row.avatar_url),
+  }
+}
+
+/** @param {any} row */
 function toTicks(row) {
   return { rule_id: Number(row.rule_id), followed: row.followed === true }
 }
@@ -92,28 +103,41 @@ export function createStore(db, now = () => new Date().toISOString()) {
     return (await db.query('DELETE FROM rules WHERE id = $1 RETURNING id', [id])).length > 0
   }
 
-  async function listTrades() {
+  // Every trade function takes the signed-in user's id and only sees that user's trades, so a
+  // trade that belongs to someone else looks exactly like one that does not exist.
+
+  /** @param {number} userId */
+  async function listTrades(userId) {
     /** @type {Map<number, {rule_id: number, followed: boolean}[]>} */
     const ticks = new Map()
-    for (const row of await db.query('SELECT trade_id, rule_id, followed FROM trade_rules ORDER BY rule_id')) {
+    const tickRows = await db.query(
+      'SELECT tr.trade_id, tr.rule_id, tr.followed FROM trade_rules tr JOIN trades t ON t.id = tr.trade_id WHERE t.user_id = $1 ORDER BY tr.rule_id',
+      [userId],
+    )
+    for (const row of tickRows) {
       const id = Number(row.trade_id)
       ticks.set(id, [...(ticks.get(id) ?? []), toTicks(row)])
     }
     /** @type {Map<number, number>} */
     const edits = new Map()
-    for (const row of await db.query('SELECT trade_id, COUNT(*) AS n FROM trade_edits GROUP BY trade_id')) {
+    const editRows = await db.query(
+      'SELECT e.trade_id, COUNT(*) AS n FROM trade_edits e JOIN trades t ON t.id = e.trade_id WHERE t.user_id = $1 GROUP BY e.trade_id',
+      [userId],
+    )
+    for (const row of editRows) {
       edits.set(Number(row.trade_id), Number(row.n))
     }
-    return (await db.query('SELECT * FROM trades ORDER BY exit_date IS NOT NULL, entry_date DESC, id DESC'))
+    return (await db.query('SELECT * FROM trades WHERE user_id = $1 ORDER BY exit_date IS NOT NULL, entry_date DESC, id DESC', [userId]))
       .map((row) => toTrade(row, ticks.get(Number(row.id)) ?? [], edits.get(Number(row.id)) ?? 0))
   }
 
   /**
+   * @param {number} userId
    * @param {number} id
    * @param {Queryable} [q]
    */
-  async function getTrade(id, q = db) {
-    const [row] = await q.query('SELECT * FROM trades WHERE id = $1', [id])
+  async function getTrade(userId, id, q = db) {
+    const [row] = await q.query('SELECT * FROM trades WHERE id = $1 AND user_id = $2', [id, userId])
     if (!row) return undefined
     const checklist = (await q.query('SELECT rule_id, followed FROM trade_rules WHERE trade_id = $1 ORDER BY rule_id', [id])).map(toTicks)
     const edits = (await q.query('SELECT id, field, old_value, new_value, edited_at FROM trade_edits WHERE trade_id = $1 ORDER BY id DESC', [id]))
@@ -132,27 +156,31 @@ export function createStore(db, now = () => new Date().toISOString()) {
     }
   }
 
-  /** @param {any} value */
-  async function createTrade(value) {
+  /**
+   * @param {number} userId
+   * @param {any} value
+   */
+  async function createTrade(userId, value) {
     return db.transaction(async (tx) => {
       const stamp = now()
-      const columns = [...TRADE_FIELDS, 'created_at', 'updated_at']
+      const columns = [...TRADE_FIELDS, 'created_at', 'updated_at', 'user_id']
       const [{ id }] = await tx.query(
         `INSERT INTO trades (${columns.join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`,
-        [...TRADE_FIELDS.map((f) => value[f]), stamp, stamp],
+        [...TRADE_FIELDS.map((f) => value[f]), stamp, stamp, userId],
       )
       await writeChecklist(tx, Number(id), value.checklist)
-      return /** @type {NonNullable<Awaited<ReturnType<typeof getTrade>>>} */ (await getTrade(Number(id), tx))
+      return /** @type {NonNullable<Awaited<ReturnType<typeof getTrade>>>} */ (await getTrade(userId, Number(id), tx))
     })
   }
 
   /**
+   * @param {number} userId
    * @param {number} id
    * @param {any} value
    */
-  async function updateTrade(id, value) {
+  async function updateTrade(userId, id, value) {
     return db.transaction(async (tx) => {
-      const before = await getTrade(id, tx)
+      const before = await getTrade(userId, id, tx)
       if (!before) return undefined
       const stamp = now()
       if (before.status === 'closed') {
@@ -171,33 +199,99 @@ export function createStore(db, now = () => new Date().toISOString()) {
       )
       await tx.query('DELETE FROM trade_rules WHERE trade_id = $1', [id])
       await writeChecklist(tx, id, value.checklist)
-      return getTrade(id, tx)
+      return getTrade(userId, id, tx)
     })
   }
 
-  /** @param {number} id */
-  async function deleteTrade(id) {
-    return (await db.query('DELETE FROM trades WHERE id = $1 RETURNING id', [id])).length > 0
+  /**
+   * @param {number} userId
+   * @param {number} id
+   */
+  async function deleteTrade(userId, id) {
+    return (await db.query('DELETE FROM trades WHERE id = $1 AND user_id = $2 RETURNING id', [id, userId])).length > 0
   }
 
-  /** @param {string} day */
-  async function recordActivity(day) {
-    await db.query('INSERT INTO activity_days (day) VALUES ($1) ON CONFLICT DO NOTHING', [day])
+  /**
+   * @param {number} userId
+   * @param {string} day
+   */
+  async function recordActivity(userId, day) {
+    await db.query('INSERT INTO activity_days (user_id, day) VALUES ($1, $2) ON CONFLICT (user_id, day) DO NOTHING', [userId, day])
   }
 
-  async function listActivityDays() {
-    return (await db.query('SELECT day FROM activity_days ORDER BY day')).map((row) => String(row.day))
+  /** @param {number} userId */
+  async function listActivityDays(userId) {
+    return (await db.query('SELECT day FROM activity_days WHERE user_id = $1 ORDER BY day', [userId])).map((row) => String(row.day))
   }
 
-  async function listSetups() {
-    return (await db.query('SELECT setup, COUNT(*) AS n FROM trades GROUP BY setup ORDER BY n DESC, setup'))
+  /** @param {number} userId */
+  async function listSetups(userId) {
+    return (await db.query('SELECT setup, COUNT(*) AS n FROM trades WHERE user_id = $1 GROUP BY setup ORDER BY n DESC, setup', [userId]))
       .map((row) => String(row.setup))
+  }
+
+  /**
+   * Creates the user on first sign-in and refreshes their profile after that.
+   *
+   * @param {{github_id: number, login: string, name: string | null, avatar_url: string | null}} profile
+   */
+  async function upsertUser(profile) {
+    const [row] = await db.query(
+      `INSERT INTO users (github_id, login, name, avatar_url, created_at) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (github_id) DO UPDATE SET login = EXCLUDED.login, name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url
+       RETURNING id, github_id, login, name, avatar_url`,
+      [profile.github_id, profile.login, profile.name, profile.avatar_url, now()],
+    )
+    return toUser(row)
+  }
+
+  /**
+   * Hands trades and journaling days recorded before sign-in existed (Part A) to this user.
+   *
+   * @param {number} userId
+   */
+  async function claimOrphans(userId) {
+    return db.transaction(async (tx) => {
+      const trades = await tx.query('UPDATE trades SET user_id = $1 WHERE user_id IS NULL RETURNING id', [userId])
+      await tx.query(
+        `UPDATE activity_days SET user_id = $1 WHERE user_id IS NULL
+         AND day NOT IN (SELECT day FROM activity_days WHERE user_id = $1)`,
+        [userId],
+      )
+      return trades.length
+    })
+  }
+
+  /**
+   * @param {string} tokenHash
+   * @param {number} userId
+   * @param {string} expiresAt
+   */
+  async function createSession(tokenHash, userId, expiresAt) {
+    await db.query('DELETE FROM sessions WHERE expires_at <= $1', [now()])
+    await db.query('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, userId, expiresAt])
+  }
+
+  /** @param {string} tokenHash */
+  async function sessionUser(tokenHash) {
+    const [row] = await db.query(
+      `SELECT u.id, u.github_id, u.login, u.name, u.avatar_url FROM sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = $1 AND s.expires_at > $2`,
+      [tokenHash, now()],
+    )
+    return row ? toUser(row) : undefined
+  }
+
+  /** @param {string} tokenHash */
+  async function deleteSession(tokenHash) {
+    await db.query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash])
   }
 
   return {
     listRules, getRule, ruleTextTaken, createRule, updateRule, deleteRule,
     listTrades, getTrade, createTrade, updateTrade, deleteTrade,
     recordActivity, listActivityDays, listSetups,
+    upsertUser, claimOrphans, createSession, sessionUser, deleteSession,
     close: () => db.close(),
   }
 }

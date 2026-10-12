@@ -1,5 +1,17 @@
 const OFFLINE = "Can't reach the journal server."
 
+/** Fired on window whenever the server says the session is gone, so the app can show sign-in. */
+export const SIGNED_OUT = 'tj:signed-out'
+
+/** An error from the server, carrying its HTTP status. */
+export class ApiError extends Error {
+  /** @param {string} message @param {number} status */
+  constructor(message, status) {
+    super(message)
+    this.status = status
+  }
+}
+
 /**
  * @param {string} path
  * @param {RequestInit} [options]
@@ -16,7 +28,8 @@ async function request(path, options = {}) {
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     if (response.status >= 500 && typeof body.error !== 'string') throw new Error(OFFLINE)
-    throw new Error(body.error ?? `Request failed with status ${response.status}.`)
+    if (response.status === 401) window.dispatchEvent(new Event(SIGNED_OUT))
+    throw new ApiError(body.error ?? `Request failed with status ${response.status}.`, response.status)
   }
   return body
 }
@@ -30,6 +43,9 @@ export function messageOf(error) {
 const json = (body) => JSON.stringify(body)
 
 export const api = {
+  /** The signed-in user, or null when nobody is. */
+  me: () => request('/api/me').catch((e) => (e instanceof ApiError && e.status === 401 ? null : Promise.reject(e))),
+  signOut: () => request('/api/auth/signout', { method: 'POST' }),
   listTrades: () => request('/api/trades'),
   /** @param {number} id */
   getTrade: (id) => request(`/api/trades/${id}`),

@@ -48,4 +48,15 @@ describe('Rules', () => {
     await user.click(screen.getByRole('button', { name: 'Yes, delete' }))
     expect(api.deleteRule).toHaveBeenCalledWith(1)
   })
+
+  it('shows members the checklist read-only, with nothing to add, rename or delete', async () => {
+    vi.mocked(api.listRules).mockResolvedValue([{ id: 1, text: 'Trend agrees', created_at: '' }])
+    render(<Rules canEdit={false} />)
+
+    expect(await screen.findByText('Trend agrees')).toBeInTheDocument()
+    expect(screen.getByText(/sets this checklist/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('New rule')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
+  })
 })

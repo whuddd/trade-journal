@@ -1,5 +1,6 @@
 import express from 'express'
 import { join } from 'node:path'
+import { createAuth } from './auth.js'
 import { computeStats, localDay, streaks, validateRule, validateTrade } from './journal.js'
 
 const NO_TRADE = 'That trade no longer exists.'
@@ -19,18 +20,32 @@ function idOf(req) {
  *   today?: () => string,
  *   staticDir?: string,
  *   commit?: string,
- *   auth?: import('express').RequestHandler,
- * }} [options] `auth` guards every API route except /api/version
+ *   auth?: import('./auth.js').AuthOptions,
+ *   trustProxy?: boolean,
+ * }} [options] `trustProxy` on the host, so req.protocol is the https the visitor used
  */
-export function createApp(store, { today = () => localDay(), staticDir, commit = 'dev', auth } = {}) {
+export function createApp(store, { today = () => localDay(), staticDir, commit = 'dev', auth = { ownerGithubId: NaN }, trustProxy = false } = {}) {
   const app = express()
+  app.set('trust proxy', trustProxy)
   app.use(express.json())
+  const { mount, requireUser, requireOwner } = createAuth(store, auth)
 
+  // Open to everyone: the running commit, and the sign-in routes themselves.
   app.get('/api/version', (_req, res) => {
     res.json({ commit })
   })
+  mount(app)
 
-  if (auth) app.use('/api', auth)
+  // Everything else under /api needs a signed-in user (401 otherwise).
+  app.use('/api', requireUser)
+
+  /** @param {import('express').Response} res */
+  const userOf = (res) => /** @type {number} */ (res.locals.user.id)
+
+  app.get('/api/me', (_req, res) => {
+    const { id, login, name, avatar_url, role } = res.locals.user
+    res.json({ id, login, name, avatar_url, role })
+  })
 
   /** @param {{rule_id: number}[]} checklist */
   async function missingRule(checklist) {
@@ -41,12 +56,12 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
   }
 
   app.get('/api/trades', async (_req, res) => {
-    res.json(await store.listTrades())
+    res.json(await store.listTrades(userOf(res)))
   })
 
   app.get('/api/trades/:id', async (req, res) => {
     const id = idOf(req)
-    const trade = id === null ? undefined : await store.getTrade(id)
+    const trade = id === null ? undefined : await store.getTrade(userOf(res), id)
     if (!trade) {
       res.status(404).json({ error: NO_TRADE })
       return
@@ -65,14 +80,14 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
       res.status(404).json({ error: missing })
       return
     }
-    const trade = await store.createTrade(result.value)
-    await store.recordActivity(today())
+    const trade = await store.createTrade(userOf(res), result.value)
+    await store.recordActivity(userOf(res), today())
     res.status(201).json(trade)
   })
 
   app.put('/api/trades/:id', async (req, res) => {
     const id = idOf(req)
-    if (id === null || !await store.getTrade(id)) {
+    if (id === null || !await store.getTrade(userOf(res), id)) {
       res.status(404).json({ error: NO_TRADE })
       return
     }
@@ -86,18 +101,18 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
       res.status(404).json({ error: missing })
       return
     }
-    const trade = await store.updateTrade(id, result.value)
-    await store.recordActivity(today())
+    const trade = await store.updateTrade(userOf(res), id, result.value)
+    await store.recordActivity(userOf(res), today())
     res.json(trade)
   })
 
   app.delete('/api/trades/:id', async (req, res) => {
     const id = idOf(req)
-    if (id === null || !await store.deleteTrade(id)) {
+    if (id === null || !await store.deleteTrade(userOf(res), id)) {
       res.status(404).json({ error: NO_TRADE })
       return
     }
-    await store.recordActivity(today())
+    await store.recordActivity(userOf(res), today())
     res.status(204).end()
   })
 
@@ -105,7 +120,7 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
     res.json(await store.listRules())
   })
 
-  app.post('/api/rules', async (req, res) => {
+  app.post('/api/rules', requireOwner, async (req, res) => {
     const result = validateRule(req.body)
     if (!result.ok) {
       res.status(400).json({ error: result.error })
@@ -118,7 +133,7 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
     res.status(201).json(await store.createRule(result.value.text))
   })
 
-  app.put('/api/rules/:id', async (req, res) => {
+  app.put('/api/rules/:id', requireOwner, async (req, res) => {
     const id = idOf(req)
     if (id === null || !await store.getRule(id)) {
       res.status(404).json({ error: NO_RULE })
@@ -136,7 +151,7 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
     res.json(await store.updateRule(id, result.value.text))
   })
 
-  app.delete('/api/rules/:id', async (req, res) => {
+  app.delete('/api/rules/:id', requireOwner, async (req, res) => {
     const id = idOf(req)
     if (id === null || !await store.deleteRule(id)) {
       res.status(404).json({ error: NO_RULE })
@@ -146,15 +161,15 @@ export function createApp(store, { today = () => localDay(), staticDir, commit =
   })
 
   app.get('/api/stats', async (_req, res) => {
-    res.json(computeStats(await store.listTrades(), await store.listRules()))
+    res.json(computeStats(await store.listTrades(userOf(res)), await store.listRules()))
   })
 
   app.get('/api/setups', async (_req, res) => {
-    res.json(await store.listSetups())
+    res.json(await store.listSetups(userOf(res)))
   })
 
   app.get('/api/activity', async (_req, res) => {
-    const days = await store.listActivityDays()
+    const days = await store.listActivityDays(userOf(res))
     res.json({ ...streaks(days, today()), days })
   })
 

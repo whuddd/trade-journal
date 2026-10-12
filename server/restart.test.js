@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { hashToken } from './auth.js'
+import { createStore } from './db.js'
 import { localDay } from './journal.js'
+import { migrate } from './migrations.js'
+import { pgliteDb } from './pg.js'
 
 const entry = fileURLToPath(new URL('./index.js', import.meta.url))
 
@@ -16,10 +20,26 @@ let children = []
 
 /**
  * Only what the server needs. Passing process.env through would hand the test server the host's
- * settings when this runs in the Vercel build: VERCEL turns auth on, and DATABASE_URL would point
- * it at the production database.
+ * settings when this runs in the Vercel build, and DATABASE_URL would point it at the production
+ * database.
  */
-const SAFE_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' }
+const SAFE_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', OWNER_GITHUB_ID: '1001' }
+const TOKEN = 'restart-test-session'
+
+/**
+ * Signs the owner in by writing a session straight into the database, before any server has it
+ * open. GitHub is not involved: auth.test.js covers the sign-in itself.
+ *
+ * @param {string} dbPath
+ */
+async function seedOwnerSession(dbPath) {
+  const db = await pgliteDb(dbPath)
+  await migrate(db)
+  const store = createStore(db)
+  const owner = await store.upsertUser({ github_id: 1001, login: 'owner', name: null, avatar_url: null })
+  await store.createSession(hashToken(TOKEN), owner.id, '2099-01-01T00:00:00.000Z')
+  await store.close()
+}
 
 /** @param {string} dbPath */
 async function startServer(dbPath) {
@@ -59,7 +79,7 @@ async function stopServer(child) {
 async function call(url, path, options = {}) {
   const response = await fetch(`${url}${path}`, {
     method: options.method ?? 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', cookie: `tj_session=${TOKEN}` },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
   expect(response.ok, `${options.method ?? 'GET'} ${path} -> ${response.status}`).toBe(true)
@@ -77,8 +97,9 @@ afterEach(async () => {
 })
 
 describe('restart', () => {
-  it('keeps a trade, its checklist tick, its edit history and the streak across a server restart', { timeout: 20000 }, async () => {
+  it('keeps a trade, its checklist tick, its edit history, the streak and the session across a server restart', { timeout: 20000 }, async () => {
     const dbPath = join(dir, 'pgdata')
+    await seedOwnerSession(dbPath)
     const first = await startServer(dbPath)
 
     const rule = await call(first.url, '/api/rules', { method: 'POST', body: { text: 'Trend agrees on monthly and weekly' } })

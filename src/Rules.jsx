@@ -3,7 +3,8 @@ import { api, messageOf } from './api.js'
 import ConfirmDelete from './ConfirmDelete.jsx'
 import { useToast } from './motion.jsx'
 
-export default function Rules() {
+/** @param {{canEdit?: boolean}} props members see the checklist; only the owner changes it */
+export default function Rules({ canEdit = true }) {
   const [rules, setRules] = useState(/** @type {{id: number, text: string}[] | null} */ (null))
   const [text, setText] = useState('')
   const [editing, setEditing] = useState(/** @type {{id: number, text: string} | null} */ (null))
@@ -57,12 +58,19 @@ export default function Rules() {
         <h2>Checklist rules</h2>
         <span className="count">{rules ? rules.length : ''}</span>
       </header>
-      <form className="panel-body rule-add" onSubmit={add}>
-        <input aria-label="New rule" placeholder="e.g. Monthly and weekly trend agree" value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="submit" className="btn primary">Add rule</button>
-      </form>
+      {canEdit ? (
+        <form className="panel-body rule-add" onSubmit={add}>
+          <input aria-label="New rule" placeholder="e.g. Monthly and weekly trend agree" value={text} onChange={(e) => setText(e.target.value)} />
+          <button type="submit" className="btn primary">Add rule</button>
+        </form>
+      ) : (
+        <p className="panel-body read-only-note">
+          <span className="role role-owner">owner</span> sets this checklist. You grade your trades against it, and Stats shows what following each rule is worth.
+        </p>
+      )}
       {error && <p className="error" role="alert">{error}</p>}
-      {rules && rules.length === 0 && (
+      {rules && rules.length === 0 && !canEdit && <p className="empty">The owner has not written any rules yet.</p>}
+      {rules && rules.length === 0 && canEdit && (
         <p className="empty">
           No rules yet. Rules are the checklist you grade every trade against, like "defined invalidation before entry".
           Stats will show whether following each one actually pays.
@@ -86,14 +94,14 @@ export default function Rules() {
                       rule.text
                     )}
                   </td>
-                  <td className="actions">
+                  {canEdit && <td className="actions">
                     {editing?.id !== rule.id && (
                       <div className="action-row">
                         <button type="button" onClick={() => setEditing({ id: rule.id, text: rule.text })}>Rename</button>
                         <ConfirmDelete warning="Removes its ticks from past trades." onConfirm={() => run(() => api.deleteRule(rule.id), 'Rule deleted')} />
                       </div>
                     )}
-                  </td>
+                  </td>}
                 </tr>
               ))}
             </tbody>

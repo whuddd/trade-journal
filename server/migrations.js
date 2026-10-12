@@ -45,6 +45,28 @@ export const MIGRATIONS = [
     )`,
     'CREATE TABLE activity_days (day TEXT PRIMARY KEY)',
   ],
+  // 2: GitHub sign-in. Only adds, so every Part A row survives. Rows without a user_id are
+  // claimed by the owner the first time they sign in (see claimOrphans in db.js).
+  [
+    `CREATE TABLE users (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      github_id BIGINT NOT NULL UNIQUE,
+      login TEXT NOT NULL,
+      name TEXT,
+      avatar_url TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL
+    )`,
+    'ALTER TABLE trades ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE',
+    'CREATE INDEX trades_user_id ON trades (user_id)',
+    'ALTER TABLE activity_days DROP CONSTRAINT activity_days_pkey',
+    'ALTER TABLE activity_days ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE',
+    'CREATE UNIQUE INDEX activity_days_user_day ON activity_days (user_id, day)',
+  ],
 ]
 
 /** Any constant works, as long as nothing else in the database uses it. */

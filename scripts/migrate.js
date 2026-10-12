@@ -1,6 +1,5 @@
-import pg from 'pg'
 import { migrate } from '../server/migrations.js'
-import { pgDb } from '../server/pg.js'
+import { pgUrlDb } from '../server/pg.js'
 
 // Runs during the Vercel build, after the tests and before the new deployment goes live.
 // A failure here fails the build, so the previous deployment keeps serving.
@@ -14,7 +13,7 @@ if (!url) {
   process.exit(0)
 }
 
-const db = pgDb(new pg.Pool({ connectionString: url, max: 1 }))
+const db = pgUrlDb(url, 1)
 try {
   const applied = await migrate(db)
   console.log(applied.length ? `Applied migrations: ${applied.join(', ')}` : 'Database already up to date.')

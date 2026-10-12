@@ -13,6 +13,8 @@ Needs Node 22 or newer.
 
 Then open http://127.0.0.1:3000. `npm start` builds the page and starts one server for both the page and the API. Locally the data lives in `data/pgdata/` (not committed), kept by PGlite, an in-process Postgres, so there is no database server to install. Set `DATABASE_URL` to use a real Postgres instead, or `PORT` or `DB_PATH` to change where it listens or where it stores data.
 
+Signing in needs a GitHub OAuth App. Put `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `OWNER_GITHUB_ID` (your numeric GitHub id) in `.env.local`, which git ignores, and open the app at http://127.0.0.1:3000 (not `localhost`) so the redirect matches the registered `http://127.0.0.1/api/auth/github/callback`.
+
 For development with hot reload, run `npm run dev` and open the URL Vite prints.
 
 ## Test
@@ -23,7 +25,9 @@ Tests run against a fresh in-memory Postgres (PGlite) each time, so they never n
 
 ## Try the main features
 
-1. **Rules tab.** Add two or three rules, like "Monthly and weekly trend agree" and "Defined invalidation before entry". Rename one and delete one.
+Sign in with GitHub first. Everyone gets a private journal; only the owner can change the rule checklist that everyone grades trades against.
+
+1. **Rules tab (owner).** Add two or three rules, like "Monthly and weekly trend agree" and "Defined invalidation before entry". Rename one and delete one.
 2. **Journal tab.** Click + New trade. Enter a call or put, grade it against your rules, and save. It shows under Open positions.
 3. **Close it.** Click Close on the open trade, enter an exit premium, and save. It moves to Closed trades with its P/L and checklist score.
 4. **Edit it after closing.** Click Edit on the closed trade and change the exit premium. The row gets an EDITED badge, and clicking the contract shows the change in its edit history.
@@ -43,7 +47,7 @@ Animations (the boot screen, count-ups, the scrolling feed and the chart drawing
 - `server/migrations.js`: the schema, as numbered migrations recorded in `schema_migrations`. Add a new one; never edit one that has shipped.
 - `server/pg.js`: the same small database interface over node-postgres (production) and PGlite (local and tests).
 - `server/app.js`: the Express API under `/api`, including `GET /api/version`.
-- `server/basic-auth.js`: one username and password in front of the API.
+- `server/auth.js`: GitHub sign-in, sessions, and the owner and member levels.
 - `server/index.js`: starts the server on a laptop and serves the built page from `dist/`.
 - `api/index.js`: the same Express app as a Vercel Function. `vercel.json` sends every `/api/*` request to it.
 - `scripts/migrate.js`: migrates the production database during the Vercel build.
