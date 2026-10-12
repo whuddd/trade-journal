@@ -4,21 +4,25 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22"
   },
   "scripts": {
-    "start": "vite build && node --disable-warning=ExperimentalWarning server/index.js",
+    "start": "vite build && node server/index.js",
+    "build": "vite build",
+    "migrate": "node scripts/migrate.js",
     "dev": "concurrently --kill-others --names api,web \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "dev:api": "node --watch server/index.js",
     "dev:web": "vite --host 127.0.0.1",
     "test": "vitest run"
   },
   "dependencies": {
     "express": "^5.2.1",
+    "pg": "^8.23.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",

@@ -179,11 +179,15 @@ export function diffTrade(before, after, ruleText) {
   return changes
 }
 
-/** Calendar date on this computer, as YYYY-MM-DD. */
-export function localDay(date = new Date()) {
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${date.getFullYear()}-${month}-${day}`
+/**
+ * Calendar date in the journal's time zone, as YYYY-MM-DD. Explicit because the host runs on
+ * UTC, where a trade logged at 9 PM in Detroit would land on tomorrow.
+ *
+ * @param {Date} [date]
+ * @param {string} [timeZone]
+ */
+export function localDay(date = new Date(), timeZone = 'America/Detroit') {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
 }
 
 /**

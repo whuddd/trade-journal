@@ -1,43 +1,50 @@
 // @vitest-environment node
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.js'
+import { basicAuth } from './basic-auth.js'
 import { createStore } from './db.js'
+import { migrate } from './migrations.js'
+import { pgliteDb } from './pg.js'
 
-let dir = ''
 /** @type {() => Promise<void>} */
 let stop = async () => {}
 let base = ''
 
-beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'journal-app-'))
-  const store = createStore(join(dir, 'test.db'))
-  const server = createApp(store, { today: () => '2026-09-27' }).listen(0, '127.0.0.1')
+/** @param {Parameters<typeof createApp>[1]} [options] */
+async function start(options = {}) {
+  const db = await pgliteDb()
+  await migrate(db)
+  const store = createStore(db)
+  const server = createApp(store, { today: () => '2026-09-27', ...options }).listen(0, '127.0.0.1')
   await once(server, 'listening')
   const { port } = /** @type {import('node:net').AddressInfo} */ (server.address())
   base = `http://127.0.0.1:${port}`
   stop = async () => {
     await new Promise((resolve) => server.close(resolve))
-    store.close()
+    await store.close()
   }
+}
+
+beforeEach(async () => {
+  await start()
 })
 
 afterEach(async () => {
   await stop()
-  rmSync(dir, { recursive: true, force: true })
 })
 
 /**
  * @param {string} path
- * @param {{method?: string, body?: unknown, raw?: string}} [options]
+ * @param {{method?: string, body?: unknown, raw?: string, headers?: Record<string, string>}} [options]
  */
 async function call(path, options = {}) {
   const response = await fetch(`${base}${path}`, {
     method: options.method ?? 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...options.headers },
     body: options.raw ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
   })
   const text = await response.text()
@@ -167,5 +174,54 @@ describe('read-backs', () => {
     expect((await call('/api/setups')).body).toEqual(['4H breakout'])
     const stats = (await call('/api/stats')).body
     expect(stats.overview).toMatchObject({ n: 1, total_pnl: 150, win_rate: 1 })
+  })
+})
+
+describe('version', () => {
+  it('reports the running commit without sign-in', async () => {
+    expect(await call('/api/version')).toEqual({ status: 200, body: { commit: 'dev' } })
+    await stop()
+    await start({ commit: 'abc123', auth: basicAuth({ user: 'me', password: 'pw' }) })
+    expect(await call('/api/version')).toEqual({ status: 200, body: { commit: 'abc123' } })
+  })
+})
+
+describe('basic auth', () => {
+  /** @param {string} pair */
+  const basic = (pair) => ({ Authorization: `Basic ${Buffer.from(pair).toString('base64')}` })
+
+  beforeEach(async () => {
+    await stop()
+    await start({ auth: basicAuth({ user: 'me', password: 'pw' }) })
+  })
+
+  it('refuses a request with no credentials, with 401 and a Basic challenge', async () => {
+    const response = await fetch(`${base}/api/trades`)
+    expect(response.status).toBe(401)
+    expect(response.headers.get('www-authenticate')).toMatch(/^Basic /)
+  })
+
+  it('refuses a wrong password or user, and a malformed header', async () => {
+    expect((await call('/api/trades', { headers: basic('me:nope') })).status).toBe(401)
+    expect((await call('/api/trades', { headers: basic('you:pw') })).status).toBe(401)
+    expect((await call('/api/trades', { headers: basic('mepw') })).status).toBe(401)
+    expect((await call('/api/trades', { headers: { Authorization: 'Bearer me:pw' } })).status).toBe(401)
+  })
+
+  it('lets the right credentials through to every route, including writes', async () => {
+    expect((await call('/api/trades', { headers: basic('me:pw') })).body).toEqual([])
+    const created = await call('/api/rules', { method: 'POST', body: { text: 'Trend agrees' }, headers: basic('me:pw') })
+    expect(created.status).toBe(201)
+  })
+
+  it('serves the pages without credentials', async () => {
+    await stop()
+    const dir = mkdtempSync(join(tmpdir(), 'journal-static-'))
+    writeFileSync(join(dir, 'index.html'), '<p>journal</p>')
+    await start({ auth: basicAuth({ user: 'me', password: 'pw' }), staticDir: dir })
+    const page = await fetch(`${base}/journal`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toBe('<p>journal</p>')
+    rmSync(dir, { recursive: true, force: true })
   })
 })

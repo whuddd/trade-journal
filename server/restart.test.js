@@ -16,7 +16,7 @@ let children = []
 
 /** @param {string} dbPath */
 async function startServer(dbPath) {
-  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', entry], {
+  const child = spawn(process.execPath, [entry], {
     env: { ...process.env, PORT: '0', DB_PATH: dbPath },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -71,7 +71,7 @@ afterEach(async () => {
 
 describe('restart', () => {
   it('keeps a trade, its checklist tick, its edit history and the streak across a server restart', { timeout: 20000 }, async () => {
-    const dbPath = join(dir, 'journal.db')
+    const dbPath = join(dir, 'pgdata')
     const first = await startServer(dbPath)
 
     const rule = await call(first.url, '/api/rules', { method: 'POST', body: { text: 'Trend agrees on monthly and weekly' } })

@@ -154,8 +154,14 @@ describe('diffTrade', () => {
 })
 
 describe('days and streaks', () => {
-  it('formats local days and adds days across months', () => {
-    expect(localDay(new Date(2026, 8, 7, 23, 30))).toBe('2026-09-07')
+  it('formats days in Detroit time, whatever the server clock zone', () => {
+    // 11 PM in Detroit on Oct 12 is 03:00 UTC on Oct 13
+    expect(localDay(new Date('2026-10-13T03:00:00Z'))).toBe('2026-10-12')
+    expect(localDay(new Date('2026-10-13T05:00:00Z'))).toBe('2026-10-13')
+    expect(localDay(new Date('2026-10-13T03:00:00Z'), 'UTC')).toBe('2026-10-13')
+  })
+
+  it('adds days across months', () => {
     expect(addDays('2026-09-30', 1)).toBe('2026-10-01')
     expect(addDays('2026-03-01', -1)).toBe('2026-02-28')
   })
